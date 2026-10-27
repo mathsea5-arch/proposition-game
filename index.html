@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>범인을 찾아라 시즌2 — 명제 추리 게임</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 입장 -->
+  <section id="join" class="card">
+    <h1>🔍 범인을 찾아라 시즌2</h1>
+    <p class="muted">조마다 디벗 한 대로 참여해요. 선생님이 알려 준 방 번호를 입력하고 우리 조를 고르세요.</p>
+    <label class="muted">방 번호</label>
+    <input id="code" type="number" inputmode="numeric" placeholder="예: 4821">
+    <label class="muted" style="display:block;margin-top:12px">우리 조</label>
+    <div class="team-grid" id="teamGrid"></div>
+    <button class="btn" id="joinBtn" disabled>입장하기</button>
+    <p id="joinMsg" class="muted"></p>
+  </section>
+
+  <!-- 게임 -->
+  <section id="game" class="hidden">
+    <div class="topbar">
+      <div><b id="tbTeam"></b> &nbsp; <span id="tbCase"></span></div>
+      <span class="tag" id="tbPhase"></span>
+    </div>
+    <div id="view"></div>
+  </section>
+
+</div>
+
+<script type="module">
+import { studentLogin, roomRef, teamRef, getDoc, setDoc, onSnapshot, serverTimestamp } from "./firebase.js";
+import { CASES, PHASES, SYMBOL } from "./cases.js";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let code = "", team = 0, room = null, me = null;
+let draft = {};          // 아직 제출 안 한 선택 (사건별)
+
+// ---------- 입장 ----------
+const params = new URLSearchParams(location.search);
+for (let n = 1; n <= 12; n++) {
+  const b = document.createElement("button");
+  b.className = "team-btn"; b.textContent = n + "조";
+  b.onclick = () => { team = n; [...$("teamGrid").children].forEach((x, i) => x.classList.toggle("on", i + 1 === n)); check(); };
+  $("teamGrid").appendChild(b);
+}
+$("code").value = params.get("room") || load("room") || "";
+$("code").oninput = check;
+function check() { $("joinBtn").disabled = !($("code").value.trim().length >= 4 && team); }
+function load(k) { try { return localStorage.getItem("whodunit_" + k); } catch { return null; } }
+function save(k, v) { try { localStorage.setItem("whodunit_" + k, v); } catch {} }
+const savedTeam = Number(load("team"));
+if (savedTeam) $("teamGrid").children[savedTeam - 1]?.click();
+
+$("joinBtn").onclick = async () => {
+  $("joinBtn").disabled = true; $("joinMsg").textContent = "연결 중…";
+  try {
+    await studentLogin();
+    code = $("code").value.trim();
+    const snap = await getDoc(roomRef(code));
+    if (!snap.exists()) { $("joinMsg").textContent = "방 번호를 다시 확인해 주세요."; check(); return; }
+    await setDoc(teamRef(code, team), { team, joinedAt: serverTimestamp() }, { merge: true });
+    save("room", code); save("team", team);
+    $("join").classList.add("hidden"); $("game").classList.remove("hidden");
+    $("tbTeam").textContent = team + "조";
+    onSnapshot(roomRef(code), (s) => { room = s.data(); render(); });
+    onSnapshot(teamRef(code, team), (s) => { me = s.data() || {}; render(); });
+  } catch (e) {
+    $("joinMsg").textContent = "연결에 실패했어요: " + (e.code || e.message); check();
+  }
+};
+
+// ---------- 화면 ----------
+function render() {
+  if (!room || !me) return;
+  const c = CASES[room.caseIdx ?? 0];
+  const phase = room.phase || "lobby";
+  $("tbCase").textContent = phase === "lobby" ? "" : c.title;
+  $("tbPhase").textContent = PHASES[phase];
+  const sub = (me.subs || {})[c.id] || {};
+  const d = (draft[c.id] ||= { tr: {}, culprits: [], liar: "", reason: "" });
+  let h = "";
+
+  if (phase === "lobby") {
+    h = `<div class="banner info">입장 완료! 선생님이 사건을 열 때까지 기다려 주세요.</div>`;
+  } else {
+    h += caseHeader(c);
+    if (phase === "intro") {
+      h += `<div class="banner info">증언을 잘 읽고 조원끼리 누가 범인일지 이야기해 보세요. 곧 '증언 해독'이 시작돼요.</div>`;
+      h += stmtList(c, null);
+    }
+    if (phase === "translate") {
+      const done = !!sub.trAt;
+      h += done ? `<div class="banner ok">✅ 해독 제출 완료! 정답은 '범인 추리' 단계에서 단서로 공개돼요.</div>`
+                : `<div class="banner info">각 증언과 <u>같은 뜻</u>인 기호식을 <b>모두</b> 고르세요. (2개일 수도 있어요!)</div>`;
+      h += stmtList(c, done ? "lockTr" : "editTr", sub, d);
+      if (!done) h += `<button class="btn" id="sendTr" ${trReady(c, d) ? "" : "disabled"}>해독 제출하기</button>`;
+    }
+    if (phase === "deduce") {
+      const done = !!sub.dAt;
+      h += `<div class="banner info">🔓 단서 공개! 초록색 해독 결과를 이용해 범인을 추리하세요.${c.askLiar ? " 거짓말한 사람도 찾아야 해요." : ""}</div>`;
+      h += stmtList(c, "clue");
+      h += deduceForm(c, done ? sub : d, done);
+    }
+    if (phase === "reveal") h += revealView(c, sub);
+  }
+  $("view").innerHTML = h;
+  bind(c, d);
+}
+
+function caseHeader(c) {
+  const sym = c.suspects.map((s) => `<span>${s}가 범인이다 : <b>${SYMBOL[s]}</b></span>`).join("");
+  return `<div class="card"><h2>${esc(c.title)} <span class="muted">${c.level}</span></h2>
+    <div class="story">${esc(c.story)}</div><div class="rule">📌 ${esc(c.rule)}</div>
+    <div class="symbols">${sym}</div></div>`;
+}
+
+function stmtList(c, mode, sub = {}, d = {}) {
+  const items = c.statements.map((st, i) => {
+    let inner = "";
+    if ((mode === "editTr" || mode === "lockTr") && st.options) {
+      const chosen = mode === "lockTr" ? (sub.tr?.[i] || []) : (d.tr[i] || []);
+      inner = `<div class="opts">${st.options.map((o, j) =>
+        `<button class="opt ${chosen.includes(j) ? "on" : ""}" data-s="${i}" data-o="${j}" ${mode === "lockTr" ? "disabled" : ""}>${o}</button>`).join("")}</div>`;
+    }
+    if (mode === "clue" && room.clues?.[i]) inner = `<div class="clue">🔑 ${esc(room.clues[i])}</div>`;
+    return `<div class="stmt"><span class="who">${st.who}</span><span class="say">“${esc(st.text)}”</span>${inner}</div>`;
+  });
+  return `<div class="card"><div class="stmts">${items.join("")}</div></div>`;
+}
+
+function trReady(c, d) { return c.statements.every((st, i) => !st.options || (d.tr[i] || []).length > 0); }
+
+function deduceForm(c, v, done) {
+  const sus = c.suspects.map((s) => `<button class="suspect ${(v.culprits || []).includes(s) ? "on" : ""}" data-c="${s}" ${done ? "disabled" : ""}>${s}<small>${(v.culprits || []).includes(s) ? "범인!" : "누르면 범인"}</small></button>`).join("");
+  const liar = c.askLiar ? `<h2 style="margin-top:16px">🤥 거짓말한 사람은?</h2><div class="suspect-grid">${c.suspects.map((s) =>
+    `<button class="suspect ${v.liar === s ? "liar" : ""}" data-l="${s}" ${done ? "disabled" : ""}>${s}</button>`).join("")}</div>` : "";
+  const ready = (v.culprits || []).length && (!c.askLiar || v.liar) && (v.reason || "").trim().length >= 10;
+  return `<div class="card"><h2>🕵️ 범인은 누구?</h2><div class="suspect-grid">${sus}</div>${liar}
+    <h2 style="margin-top:16px">✍️ 그렇게 추리한 근거</h2>
+    <textarea id="reason" placeholder="예) D가 범인이면 C의 증언의 대우에 의해 … 이므로 모순이다." ${done ? "disabled" : ""}>${esc(v.reason || "")}</textarea>
+    ${done ? `<div class="banner ok" style="margin-top:12px">✅ 추리 제출 완료! 정답 공개를 기다려요.</div>`
+           : `<p class="muted">근거를 10자 이상 써야 제출할 수 있어요. 제출은 한 번만! 빨리 맞힌 조일수록 보너스 점수가 커요.</p>
+              <button class="btn" id="sendD" ${ready ? "" : "disabled"}>추리 제출하기</button>`}</div>`;
+}
+
+function revealView(c, sub) {
+  const r = room.reveal || {};
+  const same = (a, b) => [...(a || [])].sort().join() === [...(b || [])].sort().join();
+  const right = sub.dAt && same(sub.culprits, r.culprits) && (!c.askLiar || sub.liar === r.liar);
+  let h = sub.dAt ? `<div class="banner ${right ? "ok" : "bad"}">${right ? "🎉 정답! 명탐정 인정!" : "😢 아쉬워요. 해설을 보며 어디서 갈렸는지 찾아보세요."}</div>`
+                  : `<div class="banner bad">추리를 제출하지 않았어요.</div>`;
+  h += `<div class="card"><h2>정답: 범인은 ${(r.culprits || []).join(", ")}${r.liar ? ` · 거짓말한 사람 ${r.liar}` : ""}</h2>
+        <ol class="steps">${(r.steps || []).map((s) => `<li>${esc(s)}</li>`).join("")}</ol></div>`;
+  if (room.board?.length) {
+    h += `<div class="card"><h2>🏆 현재 순위</h2><table class="board">${room.board.map((b, i) =>
+      `<tr class="${b.team === team ? "me" : ""}"><td>${i + 1}위</td><td>${b.team}조</td><td class="score">${b.score}점</td></tr>`).join("")}</table></div>`;
+  }
+  return h;
+}
+
+function bind(c, d) {
+  document.querySelectorAll(".opt:not([disabled])").forEach((b) => b.onclick = () => {
+    const s = +b.dataset.s, o = +b.dataset.o, arr = (d.tr[s] ||= []);
+    arr.includes(o) ? arr.splice(arr.indexOf(o), 1) : arr.push(o);
+    render();
+  });
+  document.querySelectorAll(".suspect[data-c]:not([disabled])").forEach((b) => b.onclick = () => {
+    keepReason(d); const s = b.dataset.c;
+    d.culprits.includes(s) ? d.culprits.splice(d.culprits.indexOf(s), 1) : d.culprits.push(s);
+    render();
+  });
+  document.querySelectorAll(".suspect[data-l]:not([disabled])").forEach((b) => b.onclick = () => {
+    keepReason(d); d.liar = d.liar === b.dataset.l ? "" : b.dataset.l; render();
+  });
+  const ta = $("reason");
+  if (ta && !ta.disabled) ta.oninput = () => {
+    d.reason = ta.value;
+    const ok = d.culprits.length && (!c.askLiar || d.liar) && d.reason.trim().length >= 10;
+    $("sendD").disabled = !ok;
+  };
+  const st = $("sendTr");
+  if (st) st.onclick = async () => {
+    st.disabled = true;
+    const tr = {}; c.statements.forEach((s, i) => { if (s.options) tr[i] = [...d.tr[i]].sort(); });
+    await setDoc(teamRef(code, team), { subs: { [c.id]: { tr, trAt: serverTimestamp() } } }, { merge: true });
+  };
+  const sd = $("sendD");
+  if (sd) sd.onclick = async () => {
+    if (!confirmBox()) return;
+    sd.disabled = true;
+    await setDoc(teamRef(code, team), { subs: { [c.id]: {
+      culprits: [...d.culprits].sort(), liar: d.liar || "", reason: d.reason.trim(), dAt: serverTimestamp() } } }, { merge: true });
+  };
+}
+function keepReason(d) { const ta = $("reason"); if (ta) d.reason = ta.value; }
+function confirmBox() { return window.confirm("제출하면 바꿀 수 없어요. 조원 모두 동의했나요?"); }
+</script>
+</body>
+</html>

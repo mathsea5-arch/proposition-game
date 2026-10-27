@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>교사용 — 범인을 찾아라 시즌2</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+</head>
+<body class="tv">
+<div class="wrap">
+
+  <section id="login" class="card">
+    <h1>🔍 범인을 찾아라 시즌2 — 교사용</h1>
+    <p class="muted">구글 계정으로 로그인하면 방을 만들고 게임을 진행할 수 있어요.</p>
+    <button class="btn" id="loginBtn">구글로 로그인</button>
+    <p id="loginMsg" class="muted"></p>
+  </section>
+
+  <section id="lobby" class="card hidden">
+    <h2>방 만들기</h2>
+    <div class="row">
+      <button class="btn" id="newRoom">새 방 만들기</button>
+      <span class="muted">또는 이전 방 이어서:</span>
+      <input id="oldCode" type="number" placeholder="방 번호" style="width:160px">
+      <button class="btn ghost" id="resume">이어서 하기</button>
+    </div>
+    <p id="lobbyMsg" class="muted"></p>
+  </section>
+
+  <section id="main" class="hidden">
+    <div class="topbar">
+      <div><b>범인을 찾아라 시즌2</b> &nbsp; <span id="caseTitle"></span></div>
+      <div class="row">
+        <span class="tag" id="joined"></span>
+        <button class="btn sm ghost" id="tvToggle">TV 모드 끄기 (답 보기)</button>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div>
+        <div class="card">
+          <div class="case-tabs" id="caseTabs"></div>
+          <div class="phase-bar" id="phaseBar"></div>
+          <p class="muted" id="phaseHelp" style="margin-bottom:0"></p>
+        </div>
+        <div class="card">
+          <h2>조별 진행 상황</h2>
+          <div class="teams" id="teams"></div>
+        </div>
+        <div class="card hidden" id="answerCard"></div>
+      </div>
+      <div>
+        <div class="card" style="text-align:center">
+          <div class="muted">방 번호</div>
+          <div class="code-big" id="codeBig"></div>
+          <div id="qr" style="margin:10px auto 4px"></div>
+          <div class="muted" id="joinUrl" style="word-break:break-all;font-size:13px"></div>
+        </div>
+        <div class="card">
+          <h2>🏆 순위</h2>
+          <table class="board" id="board"></table>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+import { auth, teacherLogin, onAuthStateChanged, roomRef, teamsCol, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp }
+  from "./firebase.js";
+import { CASES, PHASES } from "./cases.js";
+import { ANSWERS, SCORE } from "./answers.js";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let code = "", room = null, teams = [];
+const ORDER = ["intro", "translate", "deduce", "reveal"];
+const HELP = {
+  lobby: "학생들이 방 번호로 입장하는 중이에요. 사건 탭을 고르고 '사건 소개'를 누르면 시작해요.",
+  intro: "모든 조에 사건과 증언이 보여요. 2~3분 읽고 토의하게 한 뒤 '증언 해독'으로.",
+  translate: "각 조가 증언과 같은 뜻인 기호식을 고르고 있어요. 모두 제출하면 '범인 추리'로.",
+  deduce: "정답 해독식이 단서로 공개됐어요. 범인과 근거를 제출하는 중. 제출 순서가 보너스에 반영돼요.",
+  reveal: "정답과 해설, 순위가 모든 조에 공개됐어요. 근거가 좋은 조에 +10을 줄 수 있어요.",
+};
+
+// ---------- 로그인 ----------
+onAuthStateChanged(auth, (u) => {
+  if (u && !u.isAnonymous) {
+    if (!code) { $("login").classList.add("hidden"); $("lobby").classList.remove("hidden"); }
+  } else if (code) {
+    $("phaseHelp").innerHTML = `<b style="color:#c5221f">⚠️ 교사 로그인이 풀렸어요. 새로고침 후 다시 로그인해 주세요.</b>`;
+  }
+});
+$("loginBtn").onclick = async () => {
+  try { await teacherLogin(); }
+  catch (e) { $("loginMsg").textContent = "로그인 실패: " + e.code + (e.code === "auth/unauthorized-domain" ? " — Firebase 콘솔 > Authentication > 설정 > 승인된 도메인에 이 주소를 추가하세요." : ""); }
+};
+
+// ---------- 방 ----------
+$("newRoom").onclick = async () => {
+  for (let i = 0; i < 10; i++) {
+    const c = String(1000 + Math.floor(Math.random() * 9000));
+    if ((await getDoc(roomRef(c))).exists()) continue;
+    await setDoc(roomRef(c), { owner: auth.currentUser.uid, createdAt: serverTimestamp(), caseIdx: 0, phase: "lobby",
+      clues: [], reveal: {}, board: [], bonus: {} });
+    return open(c);
+  }
+};
+$("resume").onclick = async () => {
+  const c = $("oldCode").value.trim();
+  const s = await getDoc(roomRef(c));
+  if (!s.exists()) { $("lobbyMsg").textContent = "그 번호의 방이 없어요."; return; }
+  if (s.data().owner !== auth.currentUser.uid) { $("lobbyMsg").textContent = "다른 선생님이 만든 방이에요."; return; }
+  open(c);
+};
+function open(c) {
+  code = c;
+  $("lobby").classList.add("hidden"); $("main").classList.remove("hidden");
+  $("codeBig").textContent = c;
+  const url = new URL("index.html?room=" + c, location.href).href;
+  $("joinUrl").textContent = url;
+  if (window.qrcode) { const q = qrcode(0, "M"); q.addData(url); q.make(); $("qr").innerHTML = q.createImgTag(5, 8); }
+  onSnapshot(roomRef(c), (s) => { room = s.data(); render(); });
+  onSnapshot(teamsCol(c), (s) => { teams = s.docs.map((d) => d.data()).sort((a, b) => a.team - b.team); render(); });
+}
+$("tvToggle").onclick = () => {
+  const tv = document.body.classList.toggle("tv");
+  $("tvToggle").textContent = tv ? "TV 모드 끄기 (답 보기)" : "TV 모드 켜기 (답 숨기기)";
+};
+
+// ---------- 진행 ----------
+async function go(caseIdx, phase) {
+  const c = CASES[caseIdx], a = ANSWERS[c.id];
+  const patch = { caseIdx, phase };
+  patch.clues = (phase === "deduce" || phase === "reveal") ? a.clues : [];
+  patch.reveal = phase === "reveal" ? { culprits: a.culprits, liar: a.liar || "", steps: a.steps } : {};
+  if (phase === "reveal") patch.board = board(caseIdx);
+  try {
+    await updateDoc(roomRef(code), patch);
+  } catch (e) { showErr(e); }
+}
+function showErr(e) {
+  const msg = e.code === "permission-denied"
+    ? "⚠️ 저장이 거부됐어요. 교사 로그인이 풀렸을 수 있어요. 새로고침 후 구글로 다시 로그인하고 '이어서 하기'로 방에 들어오세요."
+    : "⚠️ 저장 실패: " + (e.code || e.message);
+  $("phaseHelp").innerHTML = `<b style="color:#c5221f">${msg}</b>`;
+}
+
+// ---------- 채점 ----------
+const ms = (t) => (t && t.toMillis ? t.toMillis() : Infinity);
+const same = (x, y) => [...(x || [])].sort().join() === [...(y || [])].sort().join();
+function caseResult(c, t) {
+  const a = ANSWERS[c.id], s = (t.subs || {})[c.id] || {};
+  let tr = 0;
+  if (s.trAt) a.tr.forEach((k, i) => { if (k && same((s.tr || {})[i], k)) tr++; });
+  const right = !!s.dAt && same(s.culprits, a.culprits) && (!a.liar || s.liar === a.liar);
+  return { tr, trTotal: a.tr.filter(Boolean).length, right, s };
+}
+function orderRank(c, teamNo) {
+  const rights = teams.filter((t) => caseResult(c, t).right).sort((x, y) => ms(x.subs[c.id].dAt) - ms(y.subs[c.id].dAt));
+  return rights.findIndex((t) => t.team === teamNo);
+}
+function total(t, upto) {
+  let sc = 0;
+  CASES.slice(0, upto + 1).forEach((c) => {
+    const r = caseResult(c, t);
+    sc += r.tr * SCORE.translate;
+    if (r.right) { const k = orderRank(c, t.team); sc += SCORE.correct + (SCORE.order[k] ?? SCORE.orderRest); }
+    if (room?.bonus?.[t.team]?.[c.id]) sc += SCORE.bonus;
+  });
+  return sc;
+}
+function board(upto) {
+  return teams.map((t) => ({ team: t.team, score: total(t, upto) })).sort((a, b) => b.score - a.score || a.team - b.team);
+}
+
+// ---------- 화면 ----------
+function render() {
+  if (!room) return;
+  const ci = room.caseIdx ?? 0, c = CASES[ci], ph = room.phase;
+  $("caseTitle").textContent = ph === "lobby" ? "대기 중" : `${c.title} · ${PHASES[ph]}`;
+  $("joined").textContent = `입장 ${teams.length}개 조`;
+
+  $("caseTabs").innerHTML = CASES.map((x, i) =>
+    `<button class="btn sm ${i === ci ? "" : "ghost"}" data-case="${i}">${i + 1}. ${esc(x.title.replace(/^사건 \d\. /, ""))}</button>`).join("");
+  $("caseTabs").querySelectorAll("button").forEach((b) => b.onclick = () => {
+    const i = +b.dataset.case; if (i !== ci && confirm(`사건 ${i + 1}로 넘어갈까요? (학생 화면이 사건 소개로 바뀝니다)`)) go(i, "intro");
+  });
+  $("phaseBar").innerHTML = ORDER.map((p, i) =>
+    `<button class="btn sm ${ph === p ? "on" : ""}" data-p="${p}">${i + 1}. ${PHASES[p]}</button>`).join("");
+  $("phaseBar").querySelectorAll("button").forEach((b) => b.onclick = () => go(ci, b.dataset.p));
+  $("phaseHelp").textContent = HELP[ph] || "";
+
+  // 순위·점수는 '정답 공개'가 끝난 사건까지만 반영 (TV에 정답 여부가 미리 드러나지 않게)
+  const upto = ph === "reveal" ? ci : ci - 1;
+  const ranks = {};
+  teams.filter((t) => caseResult(c, t).right).sort((x, y) => ms(x.subs[c.id].dAt) - ms(y.subs[c.id].dAt)).forEach((t, i) => ranks[t.team] = i + 1);
+  const dOrder = teams.filter((t) => t.subs?.[c.id]?.dAt).sort((x, y) => ms(x.subs[c.id].dAt) - ms(y.subs[c.id].dAt)).map((t) => t.team);
+
+  $("teams").innerHTML = teams.map((t) => {
+    const r = caseResult(c, t), s = r.s;
+    const trSt = s.trAt ? `<span class="st done">해독 ✓</span><span class="st private ${r.tr === r.trTotal ? "right" : "wrong"}">${r.tr}/${r.trTotal}</span>`
+                        : `<span class="st wait">해독 대기</span>`;
+    const dSt = s.dAt ? `<span class="st done">추리 ✓ ${dOrder.indexOf(t.team) + 1}번째</span><span class="st private ${r.right ? "right" : "wrong"}">${r.right ? "정답" + (ranks[t.team] ? " " + ranks[t.team] + "등" : "") : "오답"}</span>`
+                      : `<span class="st wait">추리 대기</span>`;
+    const ans = s.dAt ? `<div class="reason private"><b>${(s.culprits || []).join(", ")}${s.liar ? " / 거짓말 " + s.liar : ""}</b><br>${esc(s.reason)}</div>` : "";
+    const has = !!room.bonus?.[t.team]?.[c.id];
+    const bonusBtn = s.dAt ? `<button class="btn sm ghost private" data-bonus="${t.team}" style="margin-top:6px">${has ? "근거 보너스 취소" : "근거 우수 +10"}</button>` : "";
+    return `<div class="tcard"><h3>${t.team}조 <span class="muted" style="font-size:14px">${upto >= 0 ? total(t, upto) : 0}점</span></h3>${trSt}<br>${dSt}${ans}${bonusBtn}</div>`;
+  }).join("") || `<p class="muted">아직 입장한 조가 없어요.</p>`;
+  $("teams").querySelectorAll("[data-bonus]").forEach((b) => b.onclick = async () => {
+    const n = b.dataset.bonus, has = !!room.bonus?.[n]?.[c.id];
+    const bonus = structuredClone(room.bonus || {}); (bonus[n] ||= {})[c.id] = !has;
+    room.bonus = bonus;
+    await updateDoc(roomRef(code), { bonus, ...(ph === "reveal" ? { board: board(ci) } : {}) });
+  });
+
+  const b = upto >= 0 ? board(upto) : teams.map((t) => ({ team: t.team, score: 0 }));
+  $("board").innerHTML = b.map((x, i) => `<tr><td>${i + 1}위</td><td>${x.team}조</td><td class="score">${x.score}점</td></tr>`).join("");
+
+  const a = ANSWERS[c.id];
+  $("answerCard").classList.toggle("hidden", ph === "lobby");
+  $("answerCard").classList.add("private");
+  $("answerCard").innerHTML = `<h2>🔒 정답 (TV 모드에서는 숨김)</h2>
+    <p><b>범인: ${a.culprits.join(", ")}</b>${a.liar ? ` · 거짓말: ${a.liar}` : ""}</p>
+    <p class="muted">해독 정답: ${c.statements.map((st, i) => st.options ? `${st.who} → ${a.tr[i].map((k) => st.options[k]).join(" , ")}` : "").filter(Boolean).join(" / ")}</p>
+    <ol class="steps">${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
+}
+</script>
+</body>
+</html>

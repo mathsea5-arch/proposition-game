@@ -1,0 +1,94 @@
+:root {
+  --ink: #1f2430; --sub: #5f6673; --line: #dde1e8; --bg: #f6f7fb; --card: #ffffff;
+  --main: #3b4cca; --main-soft: #e8ebff; --ok: #1e8e3e; --ok-soft: #e6f4ea;
+  --bad: #c5221f; --bad-soft: #fce8e6; --warn: #b06000; --warn-soft: #fef3e0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+  background: var(--bg); color: var(--ink); font-size: 18px; line-height: 1.6; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
+.hidden { display: none !important; }
+h1 { font-size: 26px; margin: 0 0 8px; }
+h2 { font-size: 22px; margin: 0 0 10px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 14px; }
+.muted { color: var(--sub); font-size: 15px; }
+.btn { min-height: 52px; padding: 10px 20px; border-radius: 12px; border: 2px solid var(--main);
+  background: var(--main); color: #fff; font-size: 18px; font-weight: bold; cursor: pointer; font-family: inherit; }
+.btn.ghost { background: #fff; color: var(--main); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.sm { min-height: 40px; font-size: 15px; padding: 6px 12px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+input[type=text], input[type=number], textarea { font-family: inherit; font-size: 20px; padding: 12px; border: 2px solid var(--line);
+  border-radius: 12px; width: 100%; }
+textarea { font-size: 17px; min-height: 110px; resize: vertical; }
+
+/* 상단 바 */
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--main); color: #fff; padding: 12px 18px; border-radius: 14px; margin-bottom: 14px; }
+.topbar .tag { background: rgba(255,255,255,.18); padding: 4px 12px; border-radius: 999px; font-size: 15px; }
+
+/* 입장 */
+.team-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin: 12px 0; }
+.team-btn { min-height: 64px; font-size: 22px; font-weight: bold; border-radius: 14px; border: 2px solid var(--line);
+  background: #fff; cursor: pointer; font-family: inherit; }
+.team-btn.on { border-color: var(--main); background: var(--main-soft); color: var(--main); }
+
+/* 사건 */
+.story { font-size: 19px; }
+.rule { display: inline-block; background: var(--warn-soft); color: var(--warn); font-weight: bold;
+  padding: 4px 12px; border-radius: 8px; margin-top: 8px; font-size: 16px; }
+.symbols { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.symbols span { background: var(--main-soft); color: var(--main); padding: 4px 10px; border-radius: 8px; font-size: 15px; }
+.stmts { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; }
+.stmt { border: 2px solid var(--line); border-radius: 14px; padding: 14px; background: #fff; }
+.stmt .who { display: inline-flex; width: 40px; height: 40px; border-radius: 50%; align-items: center; justify-content: center;
+  background: var(--ink); color: #fff; font-weight: bold; margin-right: 8px; }
+.stmt .say { font-size: 19px; font-weight: bold; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.opt { min-height: 52px; border: 2px solid var(--line); border-radius: 12px; background: #fff; font-size: 19px;
+  font-family: 'Cambria Math', 'Times New Roman', serif; cursor: pointer; }
+.opt.on { border-color: var(--main); background: var(--main-soft); color: var(--main); font-weight: bold; }
+.opt:disabled { cursor: default; }
+.clue { margin-top: 10px; background: var(--ok-soft); color: var(--ok); border-radius: 10px; padding: 8px 12px;
+  font-family: 'Cambria Math', 'Times New Roman', serif; font-size: 18px; }
+
+/* 추리 */
+.suspect-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 10px 0; }
+.suspect { min-height: 84px; border-radius: 14px; border: 2px solid var(--line); background: #fff; font-size: 26px;
+  font-weight: bold; cursor: pointer; font-family: inherit; }
+.suspect small { display: block; font-size: 14px; font-weight: normal; color: var(--sub); }
+.suspect.on { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+.suspect.on small { color: var(--bad); }
+.suspect.liar { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+
+.banner { border-radius: 14px; padding: 16px 18px; font-size: 20px; font-weight: bold; margin-bottom: 14px; }
+.banner.ok { background: var(--ok-soft); color: var(--ok); }
+.banner.bad { background: var(--bad-soft); color: var(--bad); }
+.banner.info { background: var(--main-soft); color: var(--main); }
+.steps { margin: 6px 0 0; padding-left: 24px; }
+.steps li { margin-bottom: 8px; }
+
+/* 순위 */
+.board { width: 100%; border-collapse: collapse; font-size: 19px; }
+.board td, .board th { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+.board tr.me td { background: var(--main-soft); font-weight: bold; }
+.board td.score { text-align: right; font-weight: bold; }
+
+/* 교사 */
+.phase-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+.phase-bar .btn { background: #fff; color: var(--main); }
+.phase-bar .btn.on { background: var(--main); color: #fff; }
+.case-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.code-big { font-size: 64px; font-weight: 900; letter-spacing: 8px; color: var(--main); line-height: 1; }
+.teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.tcard { border: 2px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fff; font-size: 15px; }
+.tcard h3 { margin: 0 0 4px; font-size: 20px; }
+.tcard .st { display: inline-block; padding: 2px 8px; border-radius: 6px; margin: 2px 4px 2px 0; font-size: 13px; }
+.st.done { background: var(--ok-soft); color: var(--ok); }
+.st.wait { background: #eee; color: #888; }
+.st.right { background: var(--ok); color: #fff; }
+.st.wrong { background: var(--bad); color: #fff; }
+.reason { margin-top: 6px; font-size: 14px; color: var(--ink); background: var(--bg); border-radius: 8px; padding: 6px 8px; }
+.tv .private { display: none !important; }
+.grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .team-grid { grid-template-columns: repeat(4, 1fr); } }

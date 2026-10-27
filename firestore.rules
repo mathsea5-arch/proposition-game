@@ -1,0 +1,38 @@
+rules_version = '2';
+// 범인을 찾아라 시즌2 — Firestore 보안 규칙
+// Firebase 콘솔 > Firestore Database > 규칙 탭에 이 내용을 그대로 붙여넣고 [게시]하세요.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isTeacher() {
+      // 방을 만들 수 있는 교사 계정 (다른 선생님도 쓰게 하려면 이메일을 추가)
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email in ['mathsea5@gmail.com'];
+    }
+
+    match /rooms/{code} {
+      allow read: if signedIn();
+      allow create: if isTeacher() && request.resource.data.owner == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.owner == request.auth.uid;
+
+      // 조별 제출: 익명 로그인한 학생 누구나, 정해진 항목만 쓸 수 있음
+      match /teams/{team} {
+        allow read: if signedIn();
+        allow create, update: if signedIn()
+          && exists(/databases/$(database)/documents/rooms/$(code))
+          && request.resource.data.keys().hasOnly(['team', 'joinedAt', 'subs'])
+          && request.resource.data.team is int
+          && request.resource.data.team >= 1 && request.resource.data.team <= 12;
+        allow delete: if signedIn()
+          && get(/databases/$(database)/documents/rooms/$(code)).data.owner == request.auth.uid;
+      }
+    }
+
+    // 그 밖의 모든 경로(연결 테스트용 test 컬렉션 포함)는 막음
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
