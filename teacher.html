@@ -200,11 +200,12 @@ function render() {
 
   $("teams").innerHTML = teams.map((t) => {
     const r = caseResult(c, t), s = r.s;
-    const trSt = s.trAt ? `<span class="st done">해독 ✓</span><span class="st private ${r.tr === r.trTotal ? "right" : "wrong"}">${r.tr}/${r.trTotal}</span>`
+    const pv = ph === "reveal" ? "" : "private";   // 정답 공개 후에는 TV에도 근거·정오답 표시
+    const trSt = s.trAt ? `<span class="st done">해독 ✓</span><span class="st ${pv} ${r.tr === r.trTotal ? "right" : "wrong"}">${r.tr}/${r.trTotal}</span>`
                         : `<span class="st wait">해독 대기</span>`;
-    const dSt = s.dAt ? `<span class="st done">추리 ✓ ${dOrder.indexOf(t.team) + 1}번째</span><span class="st private ${r.right ? "right" : "wrong"}">${r.right ? "정답" + (ranks[t.team] ? " " + ranks[t.team] + "등" : "") : "오답"}</span>`
+    const dSt = s.dAt ? `<span class="st done">추리 ✓ ${dOrder.indexOf(t.team) + 1}번째</span><span class="st ${pv} ${r.right ? "right" : "wrong"}">${r.right ? "정답" + (ranks[t.team] ? " " + ranks[t.team] + "등" : "") : "오답"}</span>`
                       : `<span class="st wait">추리 대기</span>`;
-    const ans = s.dAt ? `<div class="reason private"><b>${(s.culprits || []).join(", ")}${s.liar ? " / 거짓말 " + s.liar : ""}</b><br>${esc(s.reason)}</div>` : "";
+    const ans = s.dAt ? `<div class="reason ${pv}"><b>${(s.culprits || []).join(", ")}${s.liar ? " / 거짓말 " + s.liar : ""}</b><br>${esc(s.reason)}</div>` : "";
     const has = !!room.bonus?.[t.team]?.[c.id];
     const bonusBtn = s.dAt ? `<button class="btn sm ghost private" data-bonus="${t.team}" style="margin-top:6px">${has ? "근거 보너스 취소" : "근거 우수 +10"}</button>` : "";
     return `<div class="tcard"><h3>${t.team}조 <span class="muted" style="font-size:14px">${upto >= 0 ? total(t, upto) : 0}점</span></h3>${trSt}<br>${dSt}${ans}${bonusBtn}</div>`;
