@@ -33,6 +33,7 @@
       <div><b>범인을 찾아라 시즌2</b> &nbsp; <span id="caseTitle"></span></div>
       <div class="row">
         <span class="tag" id="joined"></span>
+        <button class="btn sm ghost" id="csvBtn">기록 내려받기 (엑셀)</button>
         <button class="btn sm ghost" id="tvToggle">TV 모드 끄기 (답 보기)</button>
       </div>
     </div>
@@ -67,14 +68,14 @@
 </div>
 
 <script type="module">
-import { auth, teacherLogin, onAuthStateChanged, roomRef, teamsCol, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp }
+import { auth, teacherLogin, onAuthStateChanged, roomRef, teamsCol, membersCol, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp }
   from "./firebase.js";
 import { CASES, PHASES } from "./cases.js";
 import { ANSWERS, SCORE } from "./answers.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-let code = "", room = null, teams = [];
+let code = "", room = null, teams = [], roster = {};   // roster: 조 번호 → [{id, name}]
 const ORDER = ["intro", "translate", "deduce", "reveal"];
 const HELP = {
   lobby: "학생들이 방 번호로 입장하는 중이에요. 사건 탭을 고르고 '사건 소개'를 누르면 시작해요.",
@@ -123,6 +124,7 @@ function open(c) {
   if (window.qrcode) { const q = qrcode(0, "M"); q.addData(url); q.make(); $("qr").innerHTML = q.createImgTag(5, 8); }
   onSnapshot(roomRef(c), (s) => { room = s.data(); render(); });
   onSnapshot(teamsCol(c), (s) => { teams = s.docs.map((d) => d.data()).sort((a, b) => a.team - b.team); render(); });
+  onSnapshot(membersCol(c), (s) => { roster = {}; s.docs.forEach((d) => { const v = d.data(); roster[v.team] = v.list || []; }); render(); });
 }
 $("tvToggle").onclick = () => {
   const tv = document.body.classList.toggle("tv");
@@ -205,10 +207,12 @@ function render() {
                         : `<span class="st wait">해독 대기</span>`;
     const dSt = s.dAt ? `<span class="st done">추리 ✓ ${dOrder.indexOf(t.team) + 1}번째</span><span class="st ${pv} ${r.right ? "right" : "wrong"}">${r.right ? "정답" + (ranks[t.team] ? " " + ranks[t.team] + "등" : "") : "오답"}</span>`
                       : `<span class="st wait">추리 대기</span>`;
-    const ans = s.dAt ? `<div class="reason ${pv}"><b>${(s.culprits || []).join(", ")}${s.liar ? " / 거짓말 " + s.liar : ""}</b><br>${esc(s.reason)}</div>` : "";
+    const byTxt = (s.by || []).length ? `<br><span class="muted">✋ ${esc(s.by.map((k) => k.split(" ").slice(1).join(" ")).join(", "))}</span>` : "";
+    const ans = s.dAt ? `<div class="reason ${pv}"><b>${(s.culprits || []).join(", ")}${s.liar ? " / 거짓말 " + s.liar : ""}</b><br>${esc(s.reason)}${byTxt}</div>` : "";
+    const mem = (roster[t.team] || []).map((m) => esc(m.name)).join(" · ");
     const has = !!room.bonus?.[t.team]?.[c.id];
     const bonusBtn = s.dAt ? `<button class="btn sm ghost private" data-bonus="${t.team}" style="margin-top:6px">${has ? "근거 보너스 취소" : "근거 우수 +10"}</button>` : "";
-    return `<div class="tcard"><h3>${t.team}조 <span class="muted" style="font-size:14px">${upto >= 0 ? total(t, upto) : 0}점</span></h3>${trSt}<br>${dSt}${ans}${bonusBtn}</div>`;
+    return `<div class="tcard"><h3>${t.team}조 <span class="muted" style="font-size:14px">${upto >= 0 ? total(t, upto) : 0}점</span></h3>${mem ? `<div class="mem private">${mem}</div>` : ""}${trSt}<br>${dSt}${ans}${bonusBtn}</div>`;
   }).join("") || `<p class="muted">아직 입장한 조가 없어요.</p>`;
   $("teams").querySelectorAll("[data-bonus]").forEach((b) => b.onclick = async () => {
     const n = b.dataset.bonus, has = !!room.bonus?.[n]?.[c.id];
@@ -228,6 +232,46 @@ function render() {
     <p class="muted">해독 정답: ${c.statements.map((st, i) => st.options ? `${st.who} → ${a.tr[i].map((k) => st.options[k]).join(" , ")}` : "").filter(Boolean).join(" / ")}</p>
     <ol class="steps">${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
 }
+
+// ---------- 기록 내려받기 (학생 1명당 1줄, 엑셀에서 바로 열리는 CSV) ----------
+$("csvBtn").onclick = () => {
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = ["날짜", "방 번호", "조", "학번", "이름"];
+  CASES.forEach((c, i) => {
+    const n = `사건${i + 1}`;
+    head.push(`${n} 해독`, `${n} 고른 답`, `${n} 정오`, `${n} 정답 순위`, `${n} 근거`, `${n} 근거 제안`, `${n} 근거 우수`);
+  });
+  head.push("총점");
+  const date = new Date().toLocaleDateString("ko-KR");
+  const rows = [head];
+  const allTeams = [...new Set([...teams.map((t) => t.team), ...Object.keys(roster).map(Number)])].sort((a, b) => a - b);
+  allTeams.forEach((no) => {
+    const t = teams.find((x) => x.team === no) || { team: no, subs: {} };
+    const people = roster[no]?.length ? roster[no] : [{ id: "", name: "" }];
+    people.forEach((p) => {
+      const row = [date, code, no + "조", p.id, p.name];
+      CASES.forEach((c) => {
+        const r = caseResult(c, t), s = r.s;
+        const k = orderRank(c, no);
+        row.push(
+          s.trAt ? `${r.tr}/${r.trTotal}` : "",
+          s.dAt ? (s.culprits || []).join(",") + (s.liar ? ` (거짓말 ${s.liar})` : "") : "",
+          s.dAt ? (r.right ? "정답" : "오답") : "",
+          r.right && k >= 0 ? `${k + 1}등` : "",
+          s.reason || "",
+          (s.by || []).includes(`${p.id} ${p.name}`) ? "O" : "",
+          room?.bonus?.[no]?.[c.id] ? "O" : "");
+      });
+      row.push(total(t, CASES.length - 1));
+      rows.push(row);
+    });
+  });
+  const csv = "\uFEFF" + rows.map((r) => r.map(q).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `명제게임_${code}_${date.replace(/[. ]+/g, "-").replace(/-$/, "")}.csv`;
+  a.click();
+};
 </script>
 </body>
 </html>

@@ -17,6 +17,9 @@
     <input id="code" type="number" inputmode="numeric" placeholder="예: 4821">
     <label class="muted" style="display:block;margin-top:12px">우리 조</label>
     <div class="team-grid" id="teamGrid"></div>
+    <label class="muted" style="display:block;margin-top:12px">조원 학번·이름 <b>(선생님만 볼 수 있어요)</b></label>
+    <div id="members"></div>
+    <button class="btn sm ghost" id="addMem" style="margin:4px 0 14px">+ 조원 추가</button><br>
     <button class="btn" id="joinBtn" disabled>입장하기</button>
     <p id="joinMsg" class="muted"></p>
   </section>
@@ -33,13 +36,14 @@
 </div>
 
 <script type="module">
-import { studentLogin, roomRef, teamRef, getDoc, setDoc, onSnapshot, serverTimestamp } from "./firebase.js";
+import { studentLogin, roomRef, teamRef, memberRef, getDoc, setDoc, onSnapshot, serverTimestamp } from "./firebase.js";
 import { CASES, PHASES, SYMBOL } from "./cases.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 let code = "", team = 0, room = null, me = null;
 let draft = {};          // 아직 제출 안 한 선택 (사건별)
+let members = [];        // [{id:'10305', name:'김민준'}]
 
 // ---------- 입장 ----------
 const params = new URLSearchParams(location.search);
@@ -51,11 +55,31 @@ for (let n = 1; n <= 12; n++) {
 }
 $("code").value = params.get("room") || load("room") || "";
 $("code").oninput = check;
-function check() { $("joinBtn").disabled = !($("code").value.trim().length >= 4 && team); }
+function check() { $("joinBtn").disabled = !($("code").value.trim().length >= 4 && team && readMembers().length > 0); }
 function load(k) { try { return localStorage.getItem("whodunit_" + k); } catch { return null; } }
 function save(k, v) { try { localStorage.setItem("whodunit_" + k, v); } catch {} }
 const savedTeam = Number(load("team"));
 if (savedTeam) $("teamGrid").children[savedTeam - 1]?.click();
+
+// 조원 입력칸 (기본 4줄, 최대 6줄)
+let savedMem = [];
+try { savedMem = JSON.parse(load("members") || "[]"); } catch {}
+function memRow(m = {}) {
+  const r = document.createElement("div");
+  r.className = "row mem-row"; r.style.marginBottom = "8px";
+  r.innerHTML = `<input type="number" inputmode="numeric" class="mid" placeholder="학번 (예: 10305)" style="width:200px" value="${esc(m.id || "")}">
+                 <input type="text" class="mname" placeholder="이름" style="flex:1;min-width:140px" value="${esc(m.name || "")}">`;
+  r.querySelectorAll("input").forEach((i) => i.oninput = check);
+  $("members").appendChild(r);
+}
+(savedMem.length ? savedMem : [{}, {}, {}, {}]).forEach(memRow);
+$("addMem").onclick = () => { if ($("members").children.length < 6) memRow(); };
+function readMembers() {
+  return [...document.querySelectorAll(".mem-row")].map((r) => ({
+    id: r.querySelector(".mid").value.trim(), name: r.querySelector(".mname").value.trim(),
+  })).filter((m) => m.id && m.name);
+}
+check();
 
 $("joinBtn").onclick = async () => {
   $("joinBtn").disabled = true; $("joinMsg").textContent = "연결 중…";
@@ -64,8 +88,10 @@ $("joinBtn").onclick = async () => {
     code = $("code").value.trim();
     const snap = await getDoc(roomRef(code));
     if (!snap.exists()) { $("joinMsg").textContent = "방 번호를 다시 확인해 주세요."; check(); return; }
+    members = readMembers();
     await setDoc(teamRef(code, team), { team, joinedAt: serverTimestamp() }, { merge: true });
-    save("room", code); save("team", team);
+    await setDoc(memberRef(code, team), { team, list: members, updatedAt: serverTimestamp() });
+    save("room", code); save("team", team); save("members", JSON.stringify(members));
     $("join").classList.add("hidden"); $("game").classList.remove("hidden");
     $("tbTeam").textContent = team + "조";
     onSnapshot(roomRef(code), (s) => { room = s.data(); render(); });
@@ -83,7 +109,7 @@ function render() {
   $("tbCase").textContent = phase === "lobby" ? "" : c.title;
   $("tbPhase").textContent = PHASES[phase];
   const sub = (me.subs || {})[c.id] || {};
-  const d = (draft[c.id] ||= { tr: {}, culprits: [], liar: "", reason: "" });
+  const d = (draft[c.id] ||= { tr: {}, culprits: [], liar: "", reason: "", by: [] });
   let h = "";
 
   if (phase === "lobby") {
@@ -141,9 +167,16 @@ function deduceForm(c, v, done) {
   const liar = c.askLiar ? `<h2 style="margin-top:16px">🤥 거짓말한 사람은?</h2><div class="suspect-grid">${c.suspects.map((s) =>
     `<button class="suspect ${v.liar === s ? "liar" : ""}" data-l="${s}" ${done ? "disabled" : ""}>${s}</button>`).join("")}</div>` : "";
   const ready = (v.culprits || []).length && (!c.askLiar || v.liar) && (v.reason || "").trim().length >= 10;
+  const by = v.by || [];
+  const who = members.length ? `<h2 style="margin-top:16px">🙋 이 근거를 낸 조원 <span class="muted">(여러 명 선택 가능)</span></h2>
+    <div class="row">${members.map((m) => {
+      const k = m.id + " " + m.name;
+      return `<button class="chip ${by.includes(k) ? "on" : ""}" data-by="${esc(k)}" ${done ? "disabled" : ""}>${esc(m.name)}</button>`;
+    }).join("")}</div>` : "";
   return `<div class="card"><h2>🕵️ 범인은 누구?</h2><div class="suspect-grid">${sus}</div>${liar}
     <h2 style="margin-top:16px">✍️ 그렇게 추리한 근거</h2>
     <textarea id="reason" placeholder="예) D가 범인이면 C의 증언의 대우에 의해 … 이므로 모순이다." ${done ? "disabled" : ""}>${esc(v.reason || "")}</textarea>
+    ${who}
     ${done ? `<div class="banner ok" style="margin-top:12px">✅ 추리 제출 완료! 정답 공개를 기다려요.</div>`
            : `<p class="muted">근거를 10자 이상 써야 제출할 수 있어요. 제출은 한 번만! 빨리 맞힌 조일수록 보너스 점수가 커요.</p>
               <button class="btn" id="sendD" ${ready ? "" : "disabled"}>추리 제출하기</button>`}</div>`;
@@ -178,6 +211,11 @@ function bind(c, d) {
   document.querySelectorAll(".suspect[data-l]:not([disabled])").forEach((b) => b.onclick = () => {
     keepReason(d); d.liar = d.liar === b.dataset.l ? "" : b.dataset.l; render();
   });
+  document.querySelectorAll(".chip[data-by]:not([disabled])").forEach((b) => b.onclick = () => {
+    keepReason(d); const k = b.dataset.by, arr = (d.by ||= []);
+    arr.includes(k) ? arr.splice(arr.indexOf(k), 1) : arr.push(k);
+    render();
+  });
   const ta = $("reason");
   if (ta && !ta.disabled) ta.oninput = () => {
     d.reason = ta.value;
@@ -195,7 +233,7 @@ function bind(c, d) {
     if (!confirmBox()) return;
     sd.disabled = true;
     await setDoc(teamRef(code, team), { subs: { [c.id]: {
-      culprits: [...d.culprits].sort(), liar: d.liar || "", reason: d.reason.trim(), dAt: serverTimestamp() } } }, { merge: true });
+      culprits: [...d.culprits].sort(), liar: d.liar || "", reason: d.reason.trim(), by: d.by || [], dAt: serverTimestamp() } } }, { merge: true });
   };
 }
 function keepReason(d) { const ta = $("reason"); if (ta) d.reason = ta.value; }

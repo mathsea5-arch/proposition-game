@@ -40,5 +40,8 @@ export { onAuthStateChanged, signOut };
 export const roomRef = (code) => doc(db, "rooms", code);
 export const teamRef = (code, n) => doc(db, "rooms", code, "teams", String(n));
 export const teamsCol = (code) => collection(db, "rooms", code, "teams");
+// 조원 명단(학번·이름): 교사만 읽을 수 있도록 별도 컬렉션
+export const memberRef = (code, n) => doc(db, "rooms", code, "members", String(n));
+export const membersCol = (code) => collection(db, "rooms", code, "members");
 
 export { getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField };
