@@ -82,4 +82,5 @@ export const PHASES = {
   translate: "증언 해독",
   deduce: "범인 추리",
   reveal: "정답 공개",
+  reflect: "마무리 성찰",
 };

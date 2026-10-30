@@ -29,13 +29,13 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/rooms/$(code)).data.owner == request.auth.uid;
       }
 
-      // 조원 명단(학번·이름): 학생은 쓰기만, 읽기는 방을 만든 교사만
+      // 조원 명단(학번·이름)과 마무리 성찰: 학생은 쓰기만, 읽기는 방을 만든 교사만
       match /members/{team} {
         allow read, delete: if signedIn()
           && get(/databases/$(database)/documents/rooms/$(code)).data.owner == request.auth.uid;
         allow create, update: if signedIn()
           && exists(/databases/$(database)/documents/rooms/$(code))
-          && request.resource.data.keys().hasOnly(['team', 'list', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['team', 'list', 'updatedAt', 'refl'])
           && request.resource.data.list is list
           && request.resource.data.list.size() <= 8
           && request.resource.data.team is int

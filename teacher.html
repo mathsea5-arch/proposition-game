@@ -75,7 +75,7 @@ import { ANSWERS, SCORE } from "./answers.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-let code = "", room = null, teams = [], roster = {};   // roster: 조 번호 → [{id, name}]
+let code = "", room = null, teams = [], roster = {}, refls = {};   // roster: 조 → [{id, name}], refls: 조 → {학번: {roles, text}}
 const ORDER = ["intro", "translate", "deduce", "reveal"];
 const HELP = {
   lobby: "학생들이 방 번호로 입장하는 중이에요. 사건 탭을 고르고 '사건 소개'를 누르면 시작해요.",
@@ -83,6 +83,7 @@ const HELP = {
   translate: "각 조가 증언과 같은 뜻인 기호식을 고르고 있어요. 모두 제출하면 '범인 추리'로.",
   deduce: "정답 해독식이 단서로 공개됐어요. 범인과 근거를 제출하는 중. 제출 순서가 보너스에 반영돼요.",
   reveal: "정답과 해설, 순위가 모든 조에 공개됐어요. 근거가 좋은 조에 +10을 줄 수 있어요.",
+  reflect: "게임 끝! 각 조가 디벗을 돌려 가며 자기 역할을 고르고 성찰을 쓰는 중이에요. 다 쓰면 [기록 내려받기]를 누르세요.",
 };
 
 // ---------- 로그인 ----------
@@ -124,7 +125,7 @@ function open(c) {
   if (window.qrcode) { const q = qrcode(0, "M"); q.addData(url); q.make(); $("qr").innerHTML = q.createImgTag(5, 8); }
   onSnapshot(roomRef(c), (s) => { room = s.data(); render(); });
   onSnapshot(teamsCol(c), (s) => { teams = s.docs.map((d) => d.data()).sort((a, b) => a.team - b.team); render(); });
-  onSnapshot(membersCol(c), (s) => { roster = {}; s.docs.forEach((d) => { const v = d.data(); roster[v.team] = v.list || []; }); render(); });
+  onSnapshot(membersCol(c), (s) => { roster = {}; refls = {}; s.docs.forEach((d) => { const v = d.data(); roster[v.team] = v.list || []; refls[v.team] = v.refl || {}; }); render(); });
 }
 $("tvToggle").onclick = () => {
   const tv = document.body.classList.toggle("tv");
@@ -137,7 +138,7 @@ async function go(caseIdx, phase) {
   const patch = { caseIdx, phase };
   patch.clues = (phase === "deduce" || phase === "reveal") ? a.clues : [];
   patch.reveal = phase === "reveal" ? { culprits: a.culprits, liar: a.liar || "", steps: a.steps } : {};
-  if (phase === "reveal") patch.board = board(caseIdx);
+  if (phase === "reveal" || phase === "reflect") patch.board = board(caseIdx);
   try {
     await updateDoc(roomRef(code), patch);
   } catch (e) { showErr(e); }
@@ -191,28 +192,33 @@ function render() {
   });
   $("phaseBar").innerHTML = ORDER.map((p, i) =>
     `<button class="btn sm ${ph === p ? "on" : ""}" data-p="${p}">${i + 1}. ${PHASES[p]}</button>`).join("");
-  $("phaseBar").querySelectorAll("button").forEach((b) => b.onclick = () => go(ci, b.dataset.p));
+  $("phaseBar").innerHTML += `<button class="btn sm ${ph === "reflect" ? "on" : ""}" data-p="reflect" style="margin-left:auto">5. ${PHASES.reflect} (게임 끝)</button>`;
+  $("phaseBar").querySelectorAll("button").forEach((b) => b.onclick = () => {
+    if (b.dataset.p === "reflect" && ph !== "reflect" && !confirm("게임을 마치고 모든 조를 '마무리 성찰' 화면으로 바꿀까요?")) return;
+    go(ci, b.dataset.p);
+  });
   $("phaseHelp").textContent = HELP[ph] || "";
 
   // 순위·점수는 '정답 공개'가 끝난 사건까지만 반영 (TV에 정답 여부가 미리 드러나지 않게)
-  const upto = ph === "reveal" ? ci : ci - 1;
+  const upto = ph === "reveal" || ph === "reflect" ? ci : ci - 1;
   const ranks = {};
   teams.filter((t) => caseResult(c, t).right).sort((x, y) => ms(x.subs[c.id].dAt) - ms(y.subs[c.id].dAt)).forEach((t, i) => ranks[t.team] = i + 1);
   const dOrder = teams.filter((t) => t.subs?.[c.id]?.dAt).sort((x, y) => ms(x.subs[c.id].dAt) - ms(y.subs[c.id].dAt)).map((t) => t.team);
 
   $("teams").innerHTML = teams.map((t) => {
     const r = caseResult(c, t), s = r.s;
-    const pv = ph === "reveal" ? "" : "private";   // 정답 공개 후에는 TV에도 근거·정오답 표시
+    const pv = ph === "reveal" || ph === "reflect" ? "" : "private";   // 정답 공개 후에는 TV에도 근거·정오답 표시
     const trSt = s.trAt ? `<span class="st done">해독 ✓</span><span class="st ${pv} ${r.tr === r.trTotal ? "right" : "wrong"}">${r.tr}/${r.trTotal}</span>`
                         : `<span class="st wait">해독 대기</span>`;
     const dSt = s.dAt ? `<span class="st done">추리 ✓ ${dOrder.indexOf(t.team) + 1}번째</span><span class="st ${pv} ${r.right ? "right" : "wrong"}">${r.right ? "정답" + (ranks[t.team] ? " " + ranks[t.team] + "등" : "") : "오답"}</span>`
                       : `<span class="st wait">추리 대기</span>`;
-    const byTxt = (s.by || []).length ? `<br><span class="muted">✋ ${esc(s.by.map((k) => k.split(" ").slice(1).join(" ")).join(", "))}</span>` : "";
-    const ans = s.dAt ? `<div class="reason ${pv}"><b>${(s.culprits || []).join(", ")}${s.liar ? " / 거짓말 " + s.liar : ""}</b><br>${esc(s.reason)}${byTxt}</div>` : "";
+    const ans = s.dAt ? `<div class="reason ${pv}"><b>${(s.culprits || []).join(", ")}${s.liar ? " / 거짓말 " + s.liar : ""}</b><br>${esc(s.reason)}</div>` : "";
     const mem = (roster[t.team] || []).map((m) => esc(m.name)).join(" · ");
+    const nRefl = Object.keys(refls[t.team] || {}).length, nMem = (roster[t.team] || []).length;
+    const reflSt = ph === "reflect" ? `<br><span class="st ${nMem && nRefl >= nMem ? "done" : "wait"}">성찰 ${nRefl}/${nMem}</span>` : "";
     const has = !!room.bonus?.[t.team]?.[c.id];
     const bonusBtn = s.dAt ? `<button class="btn sm ghost private" data-bonus="${t.team}" style="margin-top:6px">${has ? "근거 보너스 취소" : "근거 우수 +10"}</button>` : "";
-    return `<div class="tcard"><h3>${t.team}조 <span class="muted" style="font-size:14px">${upto >= 0 ? total(t, upto) : 0}점</span></h3>${mem ? `<div class="mem private">${mem}</div>` : ""}${trSt}<br>${dSt}${ans}${bonusBtn}</div>`;
+    return `<div class="tcard"><h3>${t.team}조 <span class="muted" style="font-size:14px">${upto >= 0 ? total(t, upto) : 0}점</span></h3>${mem ? `<div class="mem private">${mem}</div>` : ""}${trSt}<br>${dSt}${reflSt}${ans}${bonusBtn}</div>`;
   }).join("") || `<p class="muted">아직 입장한 조가 없어요.</p>`;
   $("teams").querySelectorAll("[data-bonus]").forEach((b) => b.onclick = async () => {
     const n = b.dataset.bonus, has = !!room.bonus?.[n]?.[c.id];
@@ -239,9 +245,9 @@ $("csvBtn").onclick = () => {
   const head = ["날짜", "방 번호", "조", "학번", "이름"];
   CASES.forEach((c, i) => {
     const n = `사건${i + 1}`;
-    head.push(`${n} 해독`, `${n} 고른 답`, `${n} 정오`, `${n} 정답 순위`, `${n} 근거`, `${n} 근거 제안`, `${n} 근거 우수`);
+    head.push(`${n} 해독`, `${n} 고른 답`, `${n} 정오`, `${n} 정답 순위`, `${n} 근거`, `${n} 근거 우수`);
   });
-  head.push("총점");
+  head.push("총점", "역할(자기 선택)", "성찰");
   const date = new Date().toLocaleDateString("ko-KR");
   const rows = [head];
   const allTeams = [...new Set([...teams.map((t) => t.team), ...Object.keys(roster).map(Number)])].sort((a, b) => a - b);
@@ -259,10 +265,10 @@ $("csvBtn").onclick = () => {
           s.dAt ? (r.right ? "정답" : "오답") : "",
           r.right && k >= 0 ? `${k + 1}등` : "",
           s.reason || "",
-          (s.by || []).includes(`${p.id} ${p.name}`) ? "O" : "",
           room?.bonus?.[no]?.[c.id] ? "O" : "");
       });
-      row.push(total(t, CASES.length - 1));
+      const rf = (refls[no] || {})[p.id] || {};
+      row.push(total(t, CASES.length - 1), (rf.roles || []).join(", "), rf.text || "");
       rows.push(row);
     });
   });
